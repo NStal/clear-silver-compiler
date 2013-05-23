@@ -1,159 +1,125 @@
 fs = require "fs"
+blockParser = require "./blockParser.coffee"
+clauseParser = require "./clauseParser.coffee"
+closeClauses = ["end-if","else","end-each"]
+parseIfNode = (clauses,index,end)->
+    clause = clauses[index]
+    console.assert clause
+    console.assert clause.type is "if"
+    ifNode = new ASTNode(clause)
+    index+=1
+    ifBody = buildAST clauses,index,end
+    ifNode.add ifBody
+    # every node has an index unless it's an body node
+    # and empty body node is
+    # not allowed to add into another node
+    # so every node.getLastNode on the tree
+    # should finally return an
+    # not empty node,thus should has index
+    index = ifNode.getLastNode().index+1
+    closeNode = new ASTNode(clauses[index])
+    if index > end
+        throw new Error "unclosed if:"+ifNode.string
+    if closeNode.type is "else"
+        elseNode = closeNode
+        ifNode.elseNode = elseNode
+        closeNode = null
+        index += 1
+        elseBody = buildAST clauses,index,end
+        elseNode.add elseBody
+        index = elseNode.getLastNode().index+1
+        closeNode = new ASTNode(clauses[index])
+    if index > end or closeNode.type isnt "end-if"
+        throw new Error "unclosed if-else:"+ifNode.string
+    ifNode.endIfNode = closeNode
+    return ifNode
 
-# unsafe replace
-# not escape any reg special chars
-String.prototype.replaceAllUnsafe = (pattern,to)->
-    return this.replace(new RegExp(pattern,"g"),to)
-Regs = {
-    token:"#?([a-z0-9_]*\\.)*([a-z_0-9]*)"
-    ,variable:"[a-z_0-9]*"
-    ,expression:"[#a-z_0-9\\-+=.]*"
-    }
-clauseMaps = [{type:"var",parser:"var:{expression}"}
-    ,{type:"if",parser:"if:{expression}"}
-    ,{type:"else",parser:"else"}
-    ,{type:"end-if",parser:"/if"}
-    ,{type:"set",parser:"set:{token}\\s*=\\s*{expression}"}
-    ,{type:"each",parser:"each:{variable}\\s*=\\s*{expression}"}
-    ,{type:"end-each",parser:"/each"}
-    ]
-# build clauesMap
-for item in clauseMaps
-    regString = item.parser
-    for value of Regs
-        regString = regString.replaceAllUnsafe(["\\{",value,"\\}"].join(""),Regs[value])
-    item.reg = new RegExp(["^",regString,"$"].join(""),"i")
-
-isCloseClause = (type)->
-    return type in ["end-if","else"]
-buildAST = (blocks,start,end)->
-    # index is the largest unparsed node
+parseEachNode = (clauses,index,end)->
+    clause = clauses[index]
+    console.assert clause.type is "each"
+    eachNode = new ASTNode(clause)
+    index += 1
+    if index > end 
+        throw "unclosed each:"+eachNode.string
+    eachBody = buildAST(clauses,index,end)
+    eachNode.add eachBody
+    index = eachNode.getLastNode().index+1
+    endEachNode = new ASTNode(clauses[index])
+    if endEachNode.type isnt "end-each"
+        throw "unclosed each:"+eachNode.string
+    eachNode.endEachNode = endEachNode
+    return eachNode
+buildAST = (clauses,start,end)->
+    # last unparser clauses
     index = start or 0
-    end = end or blocks.length-1
+    end = end  or clauses.length - 1
     bodyNode = new ASTNode()
-    while true 
+    while true
         if index > end
-            break
-        node = new ASTNode(blocks[index])
-        if isCloseClause(node.type)
-            console.log "break node ",node.clause
+            return bodyNode 
+        clause = clauses[index]
+        console.assert clause
+        # close tag like /if throw to previous level to make it close
+        if clause.type in closeClauses
             return bodyNode
-        if node.type is "else"
-            throw new Error "unexpected else:"+node.block.csContentString
-            
-        if node.type is "if"
-            index+=1
-            while true
-                #add node until else or end-if
-                if index > end
-                    throw new Error  "Unclosed If statement:"+node.block.csContentString
-                closeIf = blocks[index]
-                console.log "index",index,end,closeIf
-                console.assert closeIf
-                if closeIf.clause.type is "else"
-                    console.log "else!"
-                    if node.elseNode
-                        throw Error "dumplicated else for if statement:"+node.block.csContentString
-                    node.elseNode = new ASTNode(closeIf)
-                    lastNode = node.elseNode.getLastNode()
-                    index = lastNode.index + 1
-                    continue
-                else if closeIf.clause.type is "end-if"
-                    console.log "~~END!!! break"
-                    node.endIfNode = new ASTNode(closeIf)
-                    index = closeIf.index + 1
-                    break
-                else
-                    #normal node recursive parse
-                    childNode = buildAST blocks,index+1,end
-                    if node.elseNode
-                        node.elseNode.add childNode
-                    else
-                        node.add childNode
-                    lastNode = childNode.getLastNode()
-                    index = lastNode.index+1
-                    continue
-            # only reach here if "if" closed
-            console.assert node.endIfNode
+        # encounter en open if tag
+        if clause.type is "if"
+            ifNode = parseIfNode clauses,index,end
+            index = ifNode.getLastNode().index+1
+            bodyNode.add ifNode
+            console.assert (index is (ifNode.endIfNode.index+1)),"wrong index"
+        else if clause.type is "each"
+            eachNode = parseEachNode clauses,index,end
+            index = eachNode.getLastNode().index + 1
+            bodyNode.add eachNode
+            console.assert (index is (eachNode.endEachNode.index+1)),"wrong index"
+            # other match:TODO each;loop
         else
-            index+=1
-        bodyNode.add node
-        continue
-    return bodyNode
-        
+            #normal expression node
+            # just add to body
+            bodyNode.add new ASTNode(clause)
+            index += 1
+            console.assert (clause.index+1 is index),"wrong index"
+    return true
 class ASTNode
-    constructor:(block)-> 
-        @body = [] 
-        @block = block
-        @index = block and block.index or -1
-        @clause = block and block.clause or null
-        @type = @clause and @clause.type or "body"
+    constructor:(clause)-> 
+        @body = []
+        if not clause
+            @type = "body"
+            return
+        for item of clause
+            @[item] = clause[item]
+        console.assert @type,"clause without type"
+        console.assert (typeof @index is "number"),"clause without index"
+    isEmptyBody:()->
+        return (@type is "body") and (@body.length is 0)
+        
     getLastNode:()->
+        console.assert not @isEmptyBody(),"should'nt at last node from here"
         if @type is "if"
-            return @endIfNode
+            if @endIfNode
+                return @endIfNode
+            else if @elseNode
+                return @elseNode.getLastNode()
+            else
+                # as an normal node
+        if @type is "each"
+            if @endEachNode
+                return @endEachNode
+            else
+                # as annormal node
         if @body.length is 0
             return this
         else
             return @body[@body.length-1].getLastNode()
     add:(node)-> 
         console.assert node instanceof ASTNode
-        if not node.clause and node.body.length is 0
+        if node.isEmptyBody()
             # ignore empty body node
             return null
         @body.push(node)
-parseCSBlock = (csString,index)->
-    parseCSClauseStart = (csString,index)->
-        return csString.indexOf("<?cs",index)
-    parseCSClauseEnd = (csString,index)->
-        return csString.indexOf("?>",index)
-    parseClause = (contentString)->
-        for clauseType in clauseMaps
-            if clauseType.reg.test(contentString)
-                if clauseType.buildFromString
-                    clause = clauseType.buildFromString(contentString)
-                else
-                    clause = {type:clauseType.type}
-                return clause
-        throw new Error "unknow block:"+contentString
-    csStart = parseCSClauseStart(csString,index)
-    if csStart < 0
-        return null
-    csEnd = parseCSClauseEnd(csString,csStart+2)
-    if csEnd < 0
-        return null
-    csRawContentString = csString.substring(csStart+4,csEnd)
-    csContentString = csRawContentString.trim()
-    
-    return {
-        ,csStart:csStart
-        ,csEnd:csEnd
-        ,csContentString:csContentString
-        ,clause:parseClause(csContentString)
-        }
-
-parseBlock = (csString)->
-    blocks = []
-    index = 0
-    while csBlock = parseCSBlock(csString,index)
-        blocks.push {
-            csContentString:csString.substring(index,csBlock.csStart),
-            index:blocks.length,
-            csStart:index,
-            csEnd:csBlock.csStart
-            clause:{type:"echo"}
-            }
-        csBlock.index = blocks.length
-        blocks.push csBlock
-        index = csBlock.csEnd + 2
-    blocks.push {
-        csContentString:csString.substring(index),
-        csStart:index,
-        csEnd:csString.length
-        index:blocks.length,
-        clause:{type:"echo"}
-    }
-    return blocks
 if not module.parent
     return
 exports.buildAST = buildAST
-exports.parseBlock = parseBlock
+exports.parseBlocks = blockParser.parseBlocks
+exports.parseClauses = clauseParser.parseClauses
