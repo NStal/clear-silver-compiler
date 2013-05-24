@@ -38,5 +38,4 @@ int main(){
     CSVar("Query.myselect");
     //pass
   }
-    
 }

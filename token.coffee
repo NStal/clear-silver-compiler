@@ -21,13 +21,16 @@ parseToken = (string,start,end)->
     for operator in Operators
         if string.indexOf(operator,index) is tokenBegin
             return {position:index,string:operator}
+    # end of string?
+    if not string[index] 
+        return "EOF"
     # is a word
     while true
-        if not string[index]
-            return "EOF"
         if charReg.test string[index]
             index+=1
         else
+            break 
+        if not string[index]
             break
     if index is tokenBegin
         throw new Error "Invalid Token Meet:"+string[index]+" at "+index

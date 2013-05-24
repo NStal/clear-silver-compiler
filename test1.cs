@@ -7,4 +7,4 @@
       <?cs /each ?>
     <?cs else ?>
 	myselect = <?cs var:Query.myselect ?>
-    <?cs /if ?>
+    <?cs /if ?>c

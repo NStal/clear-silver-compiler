@@ -1,3 +1,4 @@
+expression = require "./expression.coffee"
 fs = require "fs"
 ast = require "./ast.coffee"
 token = require "./token.coffee"
@@ -39,6 +40,10 @@ testFile = ()->
         console.log "code",compiler.generateCode(AST)
 testParseToken = ()->
     console.log token.parseTokens "( var1+var2 )<var5.x.y.0*3"
- 
+testExpression = ()->
+    Expression = expression.Expression
+    exp = new Expression("5+4*3+2-1*2/5/1/2/3+123+231")
+    exp.root.print(0)
+testExpression()
 #testParseToken()
-testFile()
+#testFile()
